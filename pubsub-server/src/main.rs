@@ -1,9 +1,12 @@
+#[macro_use]
+extern crate shrinkwraprs;
+
 mod server;
 
-use std::net::{IpAddr, Ipv4Addr};
 use clap::Parser;
-use tokio::net::TcpListener;
 use dotenv::dotenv;
+use std::net::{IpAddr, Ipv4Addr};
+use tokio::net::TcpListener;
 
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
