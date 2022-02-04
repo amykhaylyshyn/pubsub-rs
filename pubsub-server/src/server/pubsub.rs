@@ -47,6 +47,14 @@ where
             }
         }
     }
+
+    pub fn subscriber_count(&self, channel: &C) -> usize {
+        let channels = self.channels.read();
+        channels
+            .get(channel)
+            .map(|sender| sender.receiver_count())
+            .unwrap_or(0)
+    }
 }
 
 #[derive(Clone, Shrinkwrap)]
@@ -63,12 +71,28 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_subscribe() -> Result<(), Box<dyn std::error::Error>> {
+    async fn test_pubsub() -> Result<(), Box<dyn std::error::Error>> {
         let pubsub: PubSub<String, String> = PubSub::new(16);
-        let mut rx: broadcast::Receiver<String> = pubsub.subscribe(&"channel1".to_owned());
+        assert_eq!(pubsub.subscriber_count(&"channel1".to_owned()), 0);
+
+        let mut rx1: broadcast::Receiver<String> = pubsub.subscribe(&"channel1".to_owned());
+        assert_eq!(pubsub.subscriber_count(&"channel1".to_owned()), 1);
+
+        let mut rx2: broadcast::Receiver<String> = pubsub.subscribe(&"channel1".to_owned());
+        assert_eq!(pubsub.subscriber_count(&"channel1".to_owned()), 2);
+
         pubsub.publish(&"channel1".to_owned(), "hello".to_string());
-        let msg = rx.recv().await?;
+        let msg = rx1.recv().await?;
         assert_eq!(msg, "hello".to_string());
+
+        drop(rx1);
+        assert_eq!(pubsub.subscriber_count(&"channel1".to_owned()), 1);
+
+        let msg = rx2.recv().await?;
+        assert_eq!(msg, "hello".to_string());
+        drop(rx2);
+        assert_eq!(pubsub.subscriber_count(&"channel1".to_owned()), 0);
+
         Ok(())
     }
 }
