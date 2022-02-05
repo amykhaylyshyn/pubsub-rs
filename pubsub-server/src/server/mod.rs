@@ -1,6 +1,4 @@
-mod pubsub;
-
-pub use pubsub::PubSub;
+pub use crate::pubsub::PubSub;
 
 pub struct Config {
     port: u16,

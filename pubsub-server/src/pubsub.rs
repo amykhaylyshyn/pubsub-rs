@@ -5,6 +5,24 @@ use std::hash::Hash;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
+pub struct Receiver<T> {
+    inner: broadcast::Receiver<T>,
+}
+
+impl<T> Receiver<T> {
+    fn new(inner: broadcast::Receiver<T>) -> Self {
+        Self {
+            inner,
+        }
+    }
+}
+
+impl<T> Drop for Receiver<T> {
+    fn drop(&mut self) {
+
+    }
+}
+
 pub struct Inner<C, T> {
     capacity: usize,
     channels: RwLock<HashMap<C, broadcast::Sender<T>>>,

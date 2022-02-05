@@ -2,6 +2,7 @@
 extern crate shrinkwraprs;
 
 mod server;
+mod pubsub;
 
 use clap::Parser;
 use dotenv::dotenv;
