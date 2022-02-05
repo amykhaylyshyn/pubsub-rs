@@ -1,4 +1,3 @@
-use derive_more::{Deref, DerefMut};
 use parking_lot::lock_api::RwLockUpgradableReadGuard;
 use parking_lot::RwLock;
 use std::collections::HashMap;
@@ -15,7 +14,11 @@ pub struct Inner<C, T> {
     channel_removed_broadcast: broadcast::Sender<C>,
 }
 
-impl<C, T> Inner<C, T> {
+impl<C, T> Inner<C, T>
+where
+    C: Clone + Eq + Hash,
+    T: 'static + Clone + Send,
+{
     fn new(capacity: usize) -> Self {
         let (channel_added_broadcast, _) = broadcast::channel(32);
         let (channel_removed_broadcast, _) = broadcast::channel(32);
@@ -31,9 +34,9 @@ impl<C, T> Inner<C, T> {
 impl<C, T> Inner<C, T>
 where
     C: Clone + Eq + Hash,
-    T: Clone,
+    T: 'static + Clone + Send,
 {
-    pub fn subscribe(self: Arc<Self>, channel: &C) -> Receiver<C, T> {
+    pub fn subscribe(self: &Arc<Self>, channel: &C) -> Receiver<C, T> {
         let channels = self.channels.upgradable_read();
         let sender = channels.get(channel);
         let inner_rx = match sender {
@@ -49,7 +52,7 @@ where
         Receiver::new(self.clone(), inner_rx, channel.clone())
     }
 
-    pub fn publish(self: Arc<Self>, channel: &C, msg: T) {
+    pub fn publish(self: &Arc<Self>, channel: &C, msg: T) {
         let channels = self.channels.upgradable_read();
         if let Some(sender) = channels.get(channel) {
             if sender.send(msg).is_err() {
@@ -58,6 +61,14 @@ where
                 self.channel_removed_broadcast.send(channel.clone()).ok();
             }
         }
+    }
+
+    pub fn subscribe_channel_added(&self) -> broadcast::Receiver<C> {
+        self.channel_added_broadcast.subscribe()
+    }
+
+    pub fn subscribe_channel_removed(&self) -> broadcast::Receiver<C> {
+        self.channel_removed_broadcast.subscribe()
     }
 
     fn notify_unsubscribe(&self, channel: &C) {
@@ -77,7 +88,7 @@ where
 pub struct Receiver<C, T>
 where
     C: Clone + Eq + Hash,
-    T: Clone,
+    T: 'static + Clone + Send,
 {
     parent: Arc<Inner<C, T>>,
     inner: BroadcastStream<T>,
@@ -87,7 +98,7 @@ where
 impl<C, T> Receiver<C, T>
 where
     C: Clone + Eq + Hash,
-    T: Clone,
+    T: 'static + Clone + Send,
 {
     fn new(parent: Arc<Inner<C, T>>, inner: broadcast::Receiver<T>, channel: C) -> Self {
         Self {
@@ -98,7 +109,11 @@ where
     }
 }
 
-impl<C, T> Deref for Receiver<C, T> {
+impl<C, T> Deref for Receiver<C, T>
+where
+    C: Clone + Eq + Hash,
+    T: 'static + Clone + Send,
+{
     type Target = BroadcastStream<T>;
 
     fn deref(&self) -> &Self::Target {
@@ -106,7 +121,11 @@ impl<C, T> Deref for Receiver<C, T> {
     }
 }
 
-impl<C, T> DerefMut for Receiver<C, T> {
+impl<C, T> DerefMut for Receiver<C, T>
+where
+    C: Clone + Eq + Hash,
+    T: 'static + Clone + Send,
+{
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
     }
@@ -115,7 +134,7 @@ impl<C, T> DerefMut for Receiver<C, T> {
 impl<C, T> Drop for Receiver<C, T>
 where
     C: Clone + Eq + Hash,
-    T: Clone,
+    T: 'static + Clone + Send,
 {
     fn drop(&mut self) {
         self.parent.notify_unsubscribe(&self.channel)
@@ -123,15 +142,26 @@ where
 }
 
 #[derive(Clone)]
-pub struct PubSub<C, T>(Arc<Inner<C, T>>);
+pub struct PubSub<C, T>(Arc<Inner<C, T>>)
+where
+    C: Clone + Eq + Hash,
+    T: 'static + Clone + Send;
 
-impl<C, T> PubSub<C, T> {
+impl<C, T> PubSub<C, T>
+where
+    C: Clone + Eq + Hash,
+    T: 'static + Clone + Send,
+{
     pub fn new(capacity: usize) -> Self {
         Self(Arc::new(Inner::new(capacity)))
     }
 }
 
-impl<C, T> Deref for PubSub<C, T> {
+impl<C, T> Deref for PubSub<C, T>
+where
+    C: Clone + Eq + Hash,
+    T: 'static + Clone + Send,
+{
     type Target = Arc<Inner<C, T>>;
 
     fn deref(&self) -> &Self::Target {
@@ -139,7 +169,11 @@ impl<C, T> Deref for PubSub<C, T> {
     }
 }
 
-impl<C, T> DerefMut for PubSub<C, T> {
+impl<C, T> DerefMut for PubSub<C, T>
+where
+    C: Clone + Eq + Hash,
+    T: 'static + Clone + Send,
+{
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
@@ -148,24 +182,37 @@ impl<C, T> DerefMut for PubSub<C, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::sync::broadcast::error::TryRecvError;
     use tokio_stream::StreamExt;
 
     #[tokio::test]
     async fn test_pubsub() -> Result<(), Box<dyn std::error::Error>> {
         let pubsub: PubSub<String, String> = PubSub::new(16);
 
+        let mut channel_added = pubsub.subscribe_channel_added();
+        let mut channel_removed = pubsub.subscribe_channel_removed();
+
+        assert_eq!(channel_added.try_recv(), Err(TryRecvError::Empty));
+        assert_eq!(channel_removed.try_recv(), Err(TryRecvError::Empty));
+
         let mut rx1 = pubsub.subscribe(&"channel1".to_owned());
+        assert_eq!(channel_added.try_recv(), Ok("channel1".to_owned()));
+
         let mut rx2 = pubsub.subscribe(&"channel1".to_owned());
 
         pubsub.publish(&"channel1".to_owned(), "hello".to_string());
-        let msg = rx1.next().await?;
+        let msg = rx1.next().await.unwrap()?;
         assert_eq!(msg, "hello".to_string());
 
         drop(rx1);
 
-        let msg = rx2.next().await?;
+        let msg = rx2.next().await.unwrap()?;
         assert_eq!(msg, "hello".to_string());
+
+        assert_eq!(channel_removed.try_recv(), Err(TryRecvError::Empty));
         drop(rx2);
+        assert_eq!(channel_removed.try_recv(), Ok("channel1".to_owned()));
+        assert_eq!(channel_added.try_recv(), Err(TryRecvError::Empty));
 
         Ok(())
     }

@@ -1,8 +1,5 @@
-#[macro_use]
-extern crate shrinkwraprs;
-
-mod server;
 mod pubsub;
+mod server;
 
 use clap::Parser;
 use dotenv::dotenv;
