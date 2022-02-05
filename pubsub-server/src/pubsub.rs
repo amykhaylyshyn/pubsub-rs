@@ -56,9 +56,10 @@ where
         let channels = self.channels.upgradable_read();
         if let Some(sender) = channels.get(channel) {
             if sender.send(msg).is_err() {
-                let mut channels = RwLockUpgradableReadGuard::upgrade(channels);
-                channels.remove(channel);
-                self.channel_removed_broadcast.send(channel.clone()).ok();
+                self.unsubscribe(
+                    RwLockUpgradableReadGuard::upgrade(channels).deref_mut(),
+                    channel,
+                );
             }
         }
     }
@@ -78,10 +79,16 @@ where
             .map(|sender| sender.receiver_count())
             .unwrap_or(0);
         if subscriber_count == 0 {
-            let mut channels = RwLockUpgradableReadGuard::upgrade(channels);
-            channels.remove(channel);
-            self.channel_removed_broadcast.send(channel.clone()).ok();
+            self.unsubscribe(
+                RwLockUpgradableReadGuard::upgrade(channels).deref_mut(),
+                channel,
+            );
         }
+    }
+
+    fn unsubscribe(&self, channels: &mut HashMap<C, broadcast::Sender<T>>, channel: &C) {
+        channels.remove(channel);
+        self.channel_removed_broadcast.send(channel.clone()).ok();
     }
 }
 
@@ -91,7 +98,7 @@ where
     T: 'static + Clone + Send,
 {
     parent: Arc<Inner<C, T>>,
-    inner: BroadcastStream<T>,
+    inner: Option<BroadcastStream<T>>,
     channel: C,
 }
 
@@ -103,7 +110,7 @@ where
     fn new(parent: Arc<Inner<C, T>>, inner: broadcast::Receiver<T>, channel: C) -> Self {
         Self {
             parent,
-            inner: BroadcastStream::new(inner),
+            inner: Some(BroadcastStream::new(inner)),
             channel,
         }
     }
@@ -117,7 +124,7 @@ where
     type Target = BroadcastStream<T>;
 
     fn deref(&self) -> &Self::Target {
-        &self.inner
+        self.inner.as_ref().unwrap()
     }
 }
 
@@ -127,7 +134,7 @@ where
     T: 'static + Clone + Send,
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.inner
+        self.inner.as_mut().unwrap()
     }
 }
 
@@ -137,6 +144,10 @@ where
     T: 'static + Clone + Send,
 {
     fn drop(&mut self) {
+        let mut inner = None;
+        std::mem::swap(&mut self.inner, &mut inner);
+        drop(inner);
+
         self.parent.notify_unsubscribe(&self.channel)
     }
 }
