@@ -10,6 +10,7 @@ authors = ["Andriy Mykhaylyshyn <andriy.mykhaylyshyn@sigma.software>"]
 dotenv = "0.15"
 log = "0.4"
 env_logger = "0.9"
+url = "2.2"
 clap = { version = "3", features = ["derive"] }
 tokio = { version = "1.15", features = ["macros", "rt-multi-thread", "net", "sync"] }
 tokio-stream = { version = "0.1", features = ["sync", "net"] }
@@ -17,3 +18,4 @@ tokio-tungstenite = "0.16"
 parking_lot = "0.11"
 futures = "0.3"
 jsonwebtoken = "8.0"
+serde = "1"

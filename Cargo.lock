@@ -620,9 +620,11 @@ dependencies = [
  "jsonwebtoken",
  "log",
  "parking_lot",
+ "serde",
  "tokio",
  "tokio-stream",
  "tokio-tungstenite",
+ "url",
 ]
 
 [[package]]
