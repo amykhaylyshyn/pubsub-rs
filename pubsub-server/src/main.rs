@@ -25,21 +25,14 @@ async fn handle_connection(
     raw_stream: TcpStream,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let remote_addr = raw_stream.peer_addr()?;
-    let (upgrade_tx, upgrade_rx) = oneshot::channel();
-    let (upgrade_result_tx, upgrade_result_rx) = oneshot::channel();
     let ws_stream = tokio_tungstenite::accept_hdr_async(
         raw_stream,
         |req: &HandshakeRequest, res: HandshakeResponse| {
             log::info!("new connection from {} to {}", remote_addr, req.uri());
-            upgrade_tx.send(req.uri().to_owned()).ok();
-            upgrade_result_rx.blocking_recv();
             Ok(res)
         },
     )
     .await?;
-
-    let upgrade_req_uri = upgrade_rx.await?;
-    upgrade_result_tx.send(());
 
     let (outgoing, incoming) = ws_stream.split();
 
