@@ -1,18 +1,16 @@
 use crate::PubSub;
-use clap::Parser;
-use dotenv::dotenv;
-use futures::{pin_mut, select, FutureExt, StreamExt};
-use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
+use futures::{pin_mut, select, FutureExt, Stream, StreamExt};
+use jsonwebtoken::{Algorithm, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
-use std::net::{IpAddr, Ipv4Addr};
-use tokio::net::{TcpListener, TcpStream};
+use std::io;
+use std::net::Ipv4Addr;
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::net::TcpListener;
 use tokio::sync::{oneshot, watch};
-use tokio_stream::iter;
 use tokio_stream::wrappers::TcpListenerStream;
 use tokio_tungstenite::tungstenite::handshake::server::{
     ErrorResponse, Request as HandshakeRequest, Response as HandshakeResponse,
 };
-use tokio_tungstenite::tungstenite::http::{Response, StatusCode};
 
 #[derive(Debug, Deserialize, Serialize)]
 struct Claims {
@@ -44,37 +42,57 @@ impl ServerHandle {
     }
 }
 
-pub struct Server {
-    port: u16,
+pub struct Server<T> {
+    listener: Option<T>,
     jwt_secret: String,
     dispatch: PubSub<String, String>,
     shutdown_signal: watch::Receiver<bool>,
 }
 
-impl Server {
+impl<T> Server<T> {
     pub fn new(
-        port: u16,
+        listener: T,
         jwt_secret: &str,
         dispatch: PubSub<String, String>,
         shutdown_signal: watch::Receiver<bool>,
     ) -> Self {
         Self {
-            port,
+            listener: Some(listener),
             jwt_secret: jwt_secret.to_string(),
             dispatch,
             shutdown_signal,
         }
     }
+}
 
-    pub async fn run(self) -> std::io::Result<()> {
-        log::info!("starting server on port {}", self.port);
-        let listener = TcpListenerStream::new(
-            TcpListener::bind((IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), self.port)).await?,
-        );
-        log::info!("websocket server listening on port {}", self.port);
+impl Server<TcpListenerStream> {
+    pub async fn bind_to_port(
+        port: u16,
+        jwt_secret: &str,
+        dispatch: PubSub<String, String>,
+        shutdown_signal: watch::Receiver<bool>,
+    ) -> io::Result<Self> {
+        Ok(Self::new(
+            TcpListenerStream::new(TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await?),
+            jwt_secret,
+            dispatch,
+            shutdown_signal,
+        ))
+    }
+}
 
+impl<T, S> Server<T>
+where
+    T: Stream<Item = io::Result<S>>,
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    pub async fn run(mut self) -> std::io::Result<()> {
         let mut shutdown_rx = self.shutdown_signal.clone();
+        let mut listener = None;
+        std::mem::swap(&mut self.listener, &mut listener);
+
         listener
+            .unwrap()
             .take_until(async {
                 shutdown_rx
                     .changed()
@@ -91,7 +109,9 @@ impl Server {
                             .map_err(|err| log::error!("handle connection error: {}", err))
                             .ok();
                     }
-                    Err(err) => log::error!("new connection error: {}", err),
+                    Err(err) => {
+                        log::error!("handle connection error: {}", err);
+                    }
                 }
             })
             .await;
@@ -99,16 +119,12 @@ impl Server {
         Ok(())
     }
 
-    async fn handle_connection(
-        &self,
-        raw_stream: TcpStream,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    async fn handle_connection(&self, raw_stream: S) -> Result<(), Box<dyn std::error::Error>> {
         let (upgrade_tx, upgrade_rx) = oneshot::channel();
-        let remote_addr = raw_stream.peer_addr()?;
         let ws_stream = tokio_tungstenite::accept_hdr_async(
             raw_stream,
             |req: &HandshakeRequest, res: HandshakeResponse| {
-                log::info!("new connection from {} to {}", remote_addr, req.uri());
+                log::info!("new connection to {}", req.uri());
                 match req.uri().query() {
                     None => Err(ErrorResponse::new(None)),
                     Some(query_str) => match serde_qs::from_str::<WsConnectionQuery>(query_str) {
@@ -170,7 +186,7 @@ mod tests {
     async fn test_shutdown() -> Result<(), Box<dyn std::error::Error>> {
         let dispatch = PubSub::new(10);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
-        let server = Server::new(4001, "secret", dispatch, shutdown_rx);
+        let server = Server::bind_to_port(4001, "secret", dispatch, shutdown_rx).await?;
         let server_task = tokio::spawn(async move {
             server.run().await.unwrap();
         });
@@ -188,7 +204,7 @@ mod tests {
 
         let dispatch = PubSub::new(10);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
-        let server = Server::new(4002, "secret", dispatch, shutdown_rx);
+        let server = Server::bind_to_port(4002, "secret", dispatch, shutdown_rx).await?;
         let server_task = tokio::spawn(async move {
             server.run().await.unwrap();
         });
