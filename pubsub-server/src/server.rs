@@ -63,6 +63,10 @@ impl<T> Server<T> {
             shutdown_signal,
         }
     }
+
+    pub fn listener(&self) -> &T {
+        self.listener.as_ref().unwrap()
+    }
 }
 
 impl Server<TcpListenerStream> {
@@ -186,7 +190,7 @@ mod tests {
     async fn test_shutdown() -> Result<(), Box<dyn std::error::Error>> {
         let dispatch = PubSub::new(10);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
-        let server = Server::bind_to_port(4001, "secret", dispatch, shutdown_rx).await?;
+        let server = Server::bind_to_port(0, "secret", dispatch, shutdown_rx).await?;
         let server_task = tokio::spawn(async move {
             server.run().await.unwrap();
         });
@@ -204,7 +208,8 @@ mod tests {
 
         let dispatch = PubSub::new(10);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
-        let server = Server::bind_to_port(4002, "secret", dispatch, shutdown_rx).await?;
+        let server = Server::bind_to_port(0, "secret", dispatch, shutdown_rx).await?;
+        let port = server.listener().as_ref().local_addr()?.port();
         let server_task = tokio::spawn(async move {
             server.run().await.unwrap();
         });
@@ -220,7 +225,7 @@ mod tests {
 
         log::info!("connecting websocket");
         let query = serde_qs::to_string(&WsConnectionQuery { token })?;
-        let url = url::Url::parse(format!("ws://127.0.0.1:4002/pubsub?{}", query).as_str())?;
+        let url = url::Url::parse(format!("ws://127.0.0.1:{}/pubsub?{}", port, query).as_str())?;
         let (ws_stream, _) = connect_async(url).await?;
         log::info!("connected to websocket");
         let (sink, stream) = ws_stream.split();
