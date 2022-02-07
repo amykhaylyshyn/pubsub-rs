@@ -621,6 +621,7 @@ dependencies = [
  "log",
  "parking_lot",
  "serde",
+ "serde_qs",
  "tokio",
  "tokio-stream",
  "tokio-tungstenite",
@@ -767,6 +768,17 @@ dependencies = [
  "itoa",
  "ryu",
  "serde",
+]
+
+[[package]]
+name = "serde_qs"
+version = "0.8.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7715380eec75f029a4ef7de39a9200e0a63823176b759d055b613f5a87df6a6"
+dependencies = [
+ "percent-encoding",
+ "serde",
+ "thiserror",
 ]
 
 [[package]]
