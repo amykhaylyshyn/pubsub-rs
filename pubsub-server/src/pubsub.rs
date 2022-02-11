@@ -1,10 +1,17 @@
+use futures::{pin_mut, Stream};
 use parking_lot::lock_api::RwLockUpgradableReadGuard;
 use parking_lot::RwLock;
+use pin_project_lite::pin_project;
 use std::collections::HashMap;
 use std::hash::Hash;
+use std::mem::ManuallyDrop;
 use std::ops::{Deref, DerefMut};
+use std::pin::Pin;
+use std::ptr::drop_in_place;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use tokio::sync::broadcast;
+use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::BroadcastStream;
 
 pub struct Inner<C, T> {
@@ -98,7 +105,7 @@ where
     T: 'static + Clone + Send,
 {
     parent: Arc<Inner<C, T>>,
-    inner: Option<BroadcastStream<T>>,
+    inner: BroadcastStream<T>,
     channel: C,
 }
 
@@ -110,31 +117,21 @@ where
     fn new(parent: Arc<Inner<C, T>>, inner: broadcast::Receiver<T>, channel: C) -> Self {
         Self {
             parent,
-            inner: Some(BroadcastStream::new(inner)),
+            inner: BroadcastStream::new(inner),
             channel,
         }
     }
 }
 
-impl<C, T> Deref for Receiver<C, T>
+impl<C, T> Stream for Receiver<C, T>
 where
     C: Clone + Eq + Hash,
     T: 'static + Clone + Send,
 {
-    type Target = BroadcastStream<T>;
+    type Item = Result<T, BroadcastStreamRecvError>;
 
-    fn deref(&self) -> &Self::Target {
-        self.inner.as_ref().unwrap()
-    }
-}
-
-impl<C, T> DerefMut for Receiver<C, T>
-where
-    C: Clone + Eq + Hash,
-    T: 'static + Clone + Send,
-{
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.inner.as_mut().unwrap()
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.inner.as_mut().poll_next(cx)
     }
 }
 
@@ -144,10 +141,6 @@ where
     T: 'static + Clone + Send,
 {
     fn drop(&mut self) {
-        let mut inner = None;
-        std::mem::swap(&mut self.inner, &mut inner);
-        drop(inner);
-
         self.parent.notify_unsubscribe(&self.channel)
     }
 }

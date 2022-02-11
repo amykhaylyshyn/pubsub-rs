@@ -1,15 +1,18 @@
 use crate::PubSub;
-use futures::{pin_mut, select, FutureExt, Stream, StreamExt};
+use futures::{pin_mut, select, FutureExt, SinkExt, Stream, StreamExt};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::net::Ipv4Addr;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
-use tokio::sync::{oneshot, watch};
-use tokio_stream::wrappers::TcpListenerStream;
-use tokio_tungstenite::tungstenite::handshake::server::{
-    ErrorResponse, Request as HandshakeRequest, Response as HandshakeResponse,
+use tokio::sync::{mpsc, oneshot, watch};
+use tokio_stream::{wrappers::TcpListenerStream, StreamExt as TokioStreamExt};
+use tokio_tungstenite::tungstenite::{
+    handshake::server::{
+        ErrorResponse, Request as HandshakeRequest, Response as HandshakeResponse,
+    },
+    Message,
 };
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -21,6 +24,18 @@ struct Claims {
 #[derive(Debug, Deserialize, Serialize)]
 struct WsConnectionQuery {
     token: String,
+}
+
+#[derive(Debug, Serialize)]
+struct NotifyMessage<'a> {
+    channel: &'a str,
+    data: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum OutgoingMessage<'a> {
+    Notify(NotifyMessage<'a>),
 }
 
 pub struct ServerHandle {
@@ -151,14 +166,47 @@ where
         .await?;
 
         let channels = upgrade_rx.await?;
-        let subscriptions = channels
-            .iter()
-            .map(|channel| self.dispatch.subscribe(channel))
-            .collect::<Vec<_>>();
+        let (tx, rx) = mpsc::channel(16);
+        let read_subscriptions = channels.iter().map(|channel| {
+            let receiver = self.dispatch.subscribe(channel);
+            let channel = channel.clone();
+            let tx = tx.clone();
+            Box::pin(async move {
+                receiver
+                    .for_each(|msg_result| {
+                        let tx = tx.clone();
+                        async move {
+                            match msg_result {
+                                Ok(msg) => {
+                                    tx.send(Message::Text(msg))
+                                        .await
+                                        .map_err(|err| log::error!("send error"))
+                                        .ok();
+                                }
+                                Err(err) => log::error!("connection is lagging"),
+                            }
+                        }
+                    })
+                    .await
+            })
+        });
+        let forward_publish_fut = async {
+            futures::future::select_all(read_subscriptions).await;
+        }
+        .fuse();
 
         let (outgoing, incoming) = ws_stream.split();
-        let rx_fut = async move {
+
+        let recv_fut = async move {
             incoming.for_each(|msg| async {}).await;
+        }
+        .fuse();
+        let send_fut = async move {
+            let mut rx = rx;
+            let mut outgoing = outgoing;
+            while let Some(msg) = rx.recv().await {
+                outgoing.send(msg).await;
+            }
         }
         .fuse();
         let mut shutdown_rx = self.shutdown_signal.clone();
@@ -167,10 +215,12 @@ where
         }
         .fuse();
 
-        pin_mut!(rx_fut, shutdown_fut);
+        pin_mut!(recv_fut, send_fut, forward_publish_fut, shutdown_fut);
 
         select! {
-            _ = rx_fut => (),
+            _ = recv_fut => (),
+            _ = send_fut => (),
+            _ = forward_publish_fut => (),
             _ = shutdown_fut => (),
         }
 
