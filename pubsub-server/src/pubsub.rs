@@ -1,7 +1,7 @@
 use futures::{pin_mut, Stream};
 use parking_lot::lock_api::RwLockUpgradableReadGuard;
 use parking_lot::RwLock;
-use pin_project_lite::pin_project;
+use pin_project::{pin_project, pinned_drop};
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::mem::ManuallyDrop;
@@ -41,7 +41,7 @@ where
 impl<C, T> Inner<C, T>
 where
     C: Clone + Eq + Hash,
-    T: 'static + Clone + Send,
+    T: Clone + Send,
 {
     pub fn subscribe(self: &Arc<Self>, channel: &C) -> Receiver<C, T> {
         let channels = self.channels.upgradable_read();
@@ -99,14 +99,31 @@ where
     }
 }
 
+#[pin_project(PinnedDrop, project = ReceiverProj)]
 pub struct Receiver<C, T>
 where
     C: Clone + Eq + Hash,
     T: 'static + Clone + Send,
 {
     parent: Arc<Inner<C, T>>,
+    #[pin]
     inner: BroadcastStream<T>,
     channel: C,
+}
+
+#[pinned_drop]
+impl<C, T> PinnedDrop for Receiver<C, T>
+where
+    C: Clone + Eq + Hash,
+    T: 'static + Clone + Send,
+{
+    fn drop(self: Pin<&mut Self>) {
+        let ReceiverProj {
+            channel, parent, ..
+        } = self.project();
+        let _ = self;
+        parent.notify_unsubscribe(&channel);
+    }
 }
 
 impl<C, T> Receiver<C, T>
@@ -131,17 +148,7 @@ where
     type Item = Result<T, BroadcastStreamRecvError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.inner.as_mut().poll_next(cx)
-    }
-}
-
-impl<C, T> Drop for Receiver<C, T>
-where
-    C: Clone + Eq + Hash,
-    T: 'static + Clone + Send,
-{
-    fn drop(&mut self) {
-        self.parent.notify_unsubscribe(&self.channel)
+        self.project().inner.as_mut().poll_next(cx)
     }
 }
 
