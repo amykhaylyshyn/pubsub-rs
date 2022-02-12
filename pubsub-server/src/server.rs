@@ -7,7 +7,7 @@ use std::net::Ipv4Addr;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot, watch};
-use tokio_stream::{wrappers::TcpListenerStream, StreamExt as TokioStreamExt};
+use tokio_stream::wrappers::TcpListenerStream;
 use tokio_tungstenite::tungstenite::{
     handshake::server::{
         ErrorResponse, Request as HandshakeRequest, Response as HandshakeResponse,
@@ -153,7 +153,7 @@ where
                             &Validation::new(Algorithm::HS256),
                         ) {
                             Ok(token_data) => {
-                                upgrade_tx.send(token_data.claims.subs);
+                                let _ = upgrade_tx.send(token_data.claims.subs);
                                 Ok(res)
                             }
                             Err(err) => Err(ErrorResponse::new(None)),
@@ -205,7 +205,7 @@ where
             let mut rx = rx;
             let mut outgoing = outgoing;
             while let Some(msg) = rx.recv().await {
-                outgoing.send(msg).await;
+                let _ = outgoing.send(msg).await;
             }
         }
         .fuse();

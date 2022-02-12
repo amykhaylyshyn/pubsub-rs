@@ -1,4 +1,4 @@
-use futures::{pin_mut, Stream};
+use futures::Stream;
 use parking_lot::lock_api::RwLockUpgradableReadGuard;
 use parking_lot::RwLock;
 use pin_project::{pin_project, pinned_drop};
@@ -7,7 +7,6 @@ use std::hash::Hash;
 use std::mem::ManuallyDrop;
 use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
-use std::ptr::drop_in_place;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::sync::broadcast;
@@ -107,7 +106,7 @@ where
 {
     parent: Arc<Inner<C, T>>,
     #[pin]
-    inner: BroadcastStream<T>,
+    inner: ManuallyDrop<BroadcastStream<T>>,
     channel: C,
 }
 
@@ -117,12 +116,14 @@ where
     C: Clone + Eq + Hash,
     T: 'static + Clone + Send,
 {
-    fn drop(self: Pin<&mut Self>) {
+    fn drop(mut self: Pin<&mut Self>) {
         let ReceiverProj {
-            channel, parent, ..
-        } = self.project();
-        let _ = self;
-        parent.notify_unsubscribe(&channel);
+            channel,
+            parent,
+            mut inner,
+        } = self.as_mut().project();
+        unsafe { ManuallyDrop::drop(&mut *inner) }
+        parent.notify_unsubscribe(channel);
     }
 }
 
@@ -134,7 +135,7 @@ where
     fn new(parent: Arc<Inner<C, T>>, inner: broadcast::Receiver<T>, channel: C) -> Self {
         Self {
             parent,
-            inner: BroadcastStream::new(inner),
+            inner: ManuallyDrop::new(BroadcastStream::new(inner)),
             channel,
         }
     }
@@ -147,8 +148,13 @@ where
 {
     type Item = Result<T, BroadcastStreamRecvError>;
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.project().inner.as_mut().poll_next(cx)
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        unsafe {
+            self.project()
+                .inner
+                .map_unchecked_mut(|x| x.deref_mut())
+                .poll_next(cx)
+        }
     }
 }
 
