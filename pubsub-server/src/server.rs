@@ -251,11 +251,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_connection() -> Result<(), Box<dyn std::error::Error>> {
-        dotenv::dotenv().ok();
-        env_logger::builder()
-            .format_timestamp(Some(TimestampPrecision::Millis))
-            .init();
-
         let dispatch = PubSub::new(10);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let server = Server::bind_to_port(0, "secret", dispatch, shutdown_rx).await?;
@@ -273,17 +268,13 @@ mod tests {
             &EncodingKey::from_secret("secret".as_ref()),
         )?;
 
-        log::info!("connecting websocket");
         let query = serde_qs::to_string(&WsConnectionQuery { token })?;
         let url = url::Url::parse(format!("ws://127.0.0.1:{}/pubsub?{}", port, query).as_str())?;
         let (ws_stream, _) = connect_async(url).await?;
-        log::info!("connected to websocket");
         let (sink, stream) = ws_stream.split();
 
-        log::info!("shutting down server");
         shutdown_tx.send(true)?;
         server_task.await?;
-        log::info!("server shut down");
         Ok(())
     }
 }
