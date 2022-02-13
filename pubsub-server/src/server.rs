@@ -38,25 +38,6 @@ enum OutgoingMessage<'a> {
     Notify(NotifyMessage<'a>),
 }
 
-pub struct ServerHandle {
-    shutdown_sender: watch::Sender<bool>,
-}
-
-impl ServerHandle {
-    fn new(shutdown: watch::Sender<bool>) -> Self {
-        Self {
-            shutdown_sender: shutdown,
-        }
-    }
-
-    pub fn shutdown(&self) {
-        self.shutdown_sender
-            .send(true)
-            .map_err(|err| log::error!("server shutdown error"))
-            .ok();
-    }
-}
-
 pub struct Server<T> {
     listener: Option<T>,
     jwt_secret: String,
@@ -116,7 +97,7 @@ where
                 shutdown_rx
                     .changed()
                     .await
-                    .map_err(|err| log::error!("shutdown server error"))
+                    .map_err(|_| log::error!("shutdown server error"))
                     .ok();
                 true
             })
@@ -156,9 +137,9 @@ where
                                 let _ = upgrade_tx.send(token_data.claims.subs);
                                 Ok(res)
                             }
-                            Err(err) => Err(ErrorResponse::new(None)),
+                            Err(_) => Err(ErrorResponse::new(None)),
                         },
-                        Err(err) => Err(ErrorResponse::new(None)),
+                        Err(_) => Err(ErrorResponse::new(None)),
                     },
                 }
             },
@@ -166,10 +147,9 @@ where
         .await?;
 
         let channels = upgrade_rx.await?;
-        let (tx, rx) = mpsc::channel(16);
+        let (tx, mut rx) = mpsc::channel(16);
         let read_subscriptions = channels.iter().map(|channel| {
             let receiver = self.dispatch.subscribe(channel);
-            let channel = channel.clone();
             let tx = tx.clone();
             Box::pin(async move {
                 receiver
@@ -180,10 +160,10 @@ where
                                 Ok(msg) => {
                                     tx.send(Message::Text(msg))
                                         .await
-                                        .map_err(|err| log::error!("send error"))
+                                        .map_err(|_| log::error!("send error"))
                                         .ok();
                                 }
-                                Err(err) => log::error!("connection is lagging"),
+                                Err(err) => log::error!("connection is lagging: {:?}", err),
                             }
                         }
                     })
@@ -198,11 +178,10 @@ where
         let (outgoing, incoming) = ws_stream.split();
 
         let recv_fut = async move {
-            incoming.for_each(|msg| async {}).await;
+            incoming.for_each(|_| async {}).await;
         }
         .fuse();
         let send_fut = async move {
-            let mut rx = rx;
             let mut outgoing = outgoing;
             while let Some(msg) = rx.recv().await {
                 let _ = outgoing.send(msg).await;
@@ -231,7 +210,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use env_logger::TimestampPrecision;
     use jsonwebtoken::{EncodingKey, Header};
     use std::time::{SystemTime, UNIX_EPOCH};
     use tokio_tungstenite::connect_async;
@@ -271,7 +249,7 @@ mod tests {
         let query = serde_qs::to_string(&WsConnectionQuery { token })?;
         let url = url::Url::parse(format!("ws://127.0.0.1:{}/pubsub?{}", port, query).as_str())?;
         let (ws_stream, _) = connect_async(url).await?;
-        let (sink, stream) = ws_stream.split();
+        let _ = ws_stream.split();
 
         shutdown_tx.send(true)?;
         server_task.await?;
