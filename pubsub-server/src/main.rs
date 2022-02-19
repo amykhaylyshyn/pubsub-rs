@@ -1,5 +1,5 @@
 mod pubsub;
-mod redis;
+mod redis_pubsub;
 mod server;
 
 use crate::server::Server;
@@ -17,6 +17,8 @@ struct Args {
     port: u16,
     #[clap(long)]
     jwt_secret: String,
+    #[clap(long)]
+    redis_address: String,
 }
 
 #[cfg(target_family = "windows")]
@@ -37,8 +39,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Args = Args::parse();
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let dispatch = PubSub::new(100);
-    let server =
-        Server::bind_to_port(args.port, args.jwt_secret.as_str(), dispatch, shutdown_rx).await?;
+    let server = Server::bind_to_port(
+        args.port,
+        args.jwt_secret.as_str(),
+        dispatch.clone(),
+        shutdown_rx.clone(),
+    )
+    .await?;
     let wait_exit_fut = async move {
         wait_exit_signal().await.expect("exit signal");
         shutdown_tx.send(true).expect("shutdown signal sent");
@@ -49,8 +56,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         server.run().await.expect("server running");
     }
     .fuse();
+    let redis_url = format!("redis://{}/", args.redis_address);
+    let redis_fut = async move {
+        redis_pubsub::redis_pubsub(redis_url.as_str(), dispatch, shutdown_rx)
+            .await
+            .map_err(|err| log::error!("redis error: {}", err))
+            .ok();
+    }
+    .fuse();
 
-    join!(wait_exit_fut, server_run_fut);
+    join!(wait_exit_fut, server_run_fut, redis_fut);
 
     Ok(())
 }

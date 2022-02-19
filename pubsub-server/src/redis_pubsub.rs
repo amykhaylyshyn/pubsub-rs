@@ -1,6 +1,6 @@
 use crate::PubSub;
 use futures::{pin_mut, select, FutureExt, StreamExt};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 enum Command {
     Subscribe(String),
@@ -8,9 +8,10 @@ enum Command {
     Publish(String, String),
 }
 
-async fn redis_pubsub(
+pub async fn redis_pubsub(
     redis_addr: &str,
     dispatch: PubSub<String, String>,
+    mut shutdown_signal: watch::Receiver<bool>,
 ) -> redis::RedisResult<()> {
     let (tx, mut rx) = mpsc::unbounded_channel();
     let client = redis::Client::open(redis_addr)?;
@@ -92,13 +93,15 @@ async fn redis_pubsub(
         }
     }
     .fuse();
+    let exit_fut = shutdown_signal.changed().fuse();
 
-    pin_mut!(subscribe_fut, unsubscribe_fut, commands_fut);
+    pin_mut!(subscribe_fut, unsubscribe_fut, commands_fut, exit_fut);
 
     select! {
         _ = subscribe_fut => (),
         _ = unsubscribe_fut => (),
         _ = commands_fut => (),
+        _ = exit_fut => (),
     }
 
     Ok(())
