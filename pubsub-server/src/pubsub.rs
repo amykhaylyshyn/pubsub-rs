@@ -14,7 +14,7 @@ use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::BroadcastStream;
 
 pub struct Inner<C, T> {
-    capacity: usize,
+    buffer_size: usize,
     channels: RwLock<HashMap<C, broadcast::Sender<T>>>,
     channel_added_broadcast: broadcast::Sender<C>,
     channel_removed_broadcast: broadcast::Sender<C>,
@@ -25,11 +25,11 @@ where
     C: Clone + Eq + Hash,
     T: 'static + Clone + Send,
 {
-    fn new(capacity: usize) -> Self {
+    fn new(buffer_size: usize) -> Self {
         let (channel_added_broadcast, _) = broadcast::channel(32);
         let (channel_removed_broadcast, _) = broadcast::channel(32);
         Self {
-            capacity,
+            buffer_size,
             channels: RwLock::new(HashMap::new()),
             channel_added_broadcast,
             channel_removed_broadcast,
@@ -48,7 +48,7 @@ where
         let inner_rx = match sender {
             Some(tx) => tx.subscribe(),
             None => {
-                let (tx, rx) = broadcast::channel(self.capacity);
+                let (tx, rx) = broadcast::channel(self.buffer_size);
                 let mut channels = RwLockUpgradableReadGuard::upgrade(channels);
                 channels.insert(channel.clone(), tx);
                 self.channel_added_broadcast.send(channel.clone()).ok();
@@ -169,8 +169,8 @@ where
     C: Clone + Eq + Hash,
     T: 'static + Clone + Send,
 {
-    pub fn new(capacity: usize) -> Self {
-        Self(Arc::new(Inner::new(capacity)))
+    pub fn new(buffer_size: usize) -> Self {
+        Self(Arc::new(Inner::new(buffer_size)))
     }
 }
 
