@@ -1,4 +1,5 @@
 mod pubsub;
+mod redis;
 mod server;
 
 use crate::server::Server;
