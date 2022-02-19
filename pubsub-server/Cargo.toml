@@ -12,7 +12,7 @@ log = "0.4"
 env_logger = "0.9"
 url = "2.2"
 clap = { version = "3", features = ["derive"] }
-tokio = { version = "1.15", features = ["macros", "rt-multi-thread", "net", "sync"] }
+tokio = { version = "1.15", features = ["macros", "rt-multi-thread", "net", "sync", "signal"] }
 tokio-stream = { version = "0.1", features = ["sync", "net"] }
 tokio-tungstenite = "0.16"
 parking_lot = "0.11"
