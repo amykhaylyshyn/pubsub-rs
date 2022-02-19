@@ -15,7 +15,7 @@ async fn redis_pubsub(
     let (tx, mut rx) = mpsc::unbounded_channel();
     let client = redis::Client::open(redis_addr)?;
     let conn = client.get_async_connection().await?;
-    let mut redis_pubsub = conn.into_pubsub();
+    let mut pubsub = conn.into_pubsub();
     let subscribe_fut = async {
         let mut channel_added = dispatch.subscribe_channel_added();
         while let Ok(channel) = channel_added.recv().await {
@@ -35,8 +35,8 @@ async fn redis_pubsub(
     }
     .fuse();
     let commands_fut = async {
-        let mut messages = redis_pubsub.on_message();
         loop {
+            let mut messages = pubsub.on_message();
             let rx_fut = rx.recv().fuse();
             let next_fut = messages.next().fuse();
 
@@ -63,6 +63,8 @@ async fn redis_pubsub(
                 }
             };
 
+            drop(messages);
+
             if cmd_opt.is_none() {
                 continue;
             }
@@ -70,14 +72,14 @@ async fn redis_pubsub(
             let cmd = cmd_opt.unwrap();
             match cmd {
                 Command::Subscribe(channel) => {
-                    redis_pubsub
+                    pubsub
                         .subscribe(channel)
                         .await
                         .map_err(|err| log::error!("subscribe error: {}", err))
                         .ok();
                 }
                 Command::Unsubscribe(channel) => {
-                    redis_pubsub
+                    pubsub
                         .unsubscribe(channel)
                         .await
                         .map_err(|err| log::error!("unsubscribe error: {}", err))
