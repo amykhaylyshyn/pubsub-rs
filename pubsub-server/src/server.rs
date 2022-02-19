@@ -137,9 +137,9 @@ where
                                 let _ = upgrade_tx.send(token_data.claims.subs);
                                 Ok(res)
                             }
-                            Err(_) => Err(ErrorResponse::new(None)),
+                            Err(_) => Err(ErrorResponse::new(Some("Unauthorized".to_string()))),
                         },
-                        Err(_) => Err(ErrorResponse::new(None)),
+                        Err(_) => Err(ErrorResponse::new(Some("Unauthorized".to_string()))),
                     },
                 }
             },
@@ -250,6 +250,25 @@ mod tests {
         let url = url::Url::parse(format!("ws://127.0.0.1:{}/pubsub?{}", port, query).as_str())?;
         let (ws_stream, _) = connect_async(url).await?;
         let _ = ws_stream.split();
+
+        shutdown_tx.send(true)?;
+        server_task.await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_unauthorized_connection() -> Result<(), Box<dyn std::error::Error>> {
+        let dispatch = PubSub::new(10);
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let server = Server::bind_to_port(0, "secret", dispatch, shutdown_rx).await?;
+        let port = server.listener().as_ref().local_addr()?.port();
+        let server_task = tokio::spawn(async move {
+            server.run().await.unwrap();
+        });
+
+        let url = url::Url::parse(format!("ws://127.0.0.1:{}/pubsub", port).as_str())?;
+        let connect_result = connect_async(url).await;
+        assert!(connect_result.is_err());
 
         shutdown_tx.send(true)?;
         server_task.await?;
