@@ -1,5 +1,6 @@
 mod pubsub;
 mod redis_pubsub;
+mod rest_api;
 mod server;
 
 use crate::server::Server;
@@ -19,6 +20,10 @@ struct Args {
     jwt_secret: String,
     #[clap(long)]
     redis_address: String,
+    #[clap(parse(try_from_str), long)]
+    rest_api_port: u16,
+    #[clap(long)]
+    rest_api_host: Option<String>,
 }
 
 #[cfg(target_family = "windows")]
@@ -31,7 +36,7 @@ async fn wait_exit_signal() -> io::Result<()> {
     unimplemented!();
 }
 
-#[tokio::main]
+#[actix_web::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
     env_logger::init();
@@ -57,15 +62,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     .fuse();
     let redis_url = format!("redis://{}/", args.redis_address);
+    let redis_url_clone = redis_url.clone();
+    let shutdown_rx_clone = shutdown_rx.clone();
     let redis_fut = async move {
-        redis_pubsub::redis_pubsub(redis_url.as_str(), dispatch, shutdown_rx)
+        redis_pubsub::redis_pubsub(redis_url_clone.as_str(), dispatch, shutdown_rx_clone)
             .await
             .map_err(|err| log::error!("redis error: {}", err))
             .ok();
     }
     .fuse();
+    let rest_api_host = format!(
+        "{}:{}",
+        args.rest_api_host.unwrap_or("127.0.0.1".to_owned()),
+        args.rest_api_port
+    );
+    let rest_api_fut = async move {
+        rest_api::run_api(rest_api_host.as_str(), redis_url.as_str(), shutdown_rx)
+            .await
+            .map_err(|err| log::error!("rest api error: {}", err))
+            .ok();
+    }
+    .fuse();
 
-    join!(wait_exit_fut, server_run_fut, redis_fut);
+    join!(wait_exit_fut, server_run_fut, redis_fut, rest_api_fut);
 
     Ok(())
 }

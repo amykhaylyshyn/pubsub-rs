@@ -6,6 +6,7 @@ enum Command {
     Subscribe(String),
     Unsubscribe(String),
     Publish(String, String),
+    Quit,
 }
 
 pub async fn redis_pubsub(
@@ -13,20 +14,7 @@ pub async fn redis_pubsub(
     dispatch: PubSub<String, String>,
     mut shutdown_signal: watch::Receiver<bool>,
 ) -> redis::RedisResult<()> {
-    log::info!("connecting to {}", redis_url);
     let (tx, mut rx) = mpsc::unbounded_channel();
-    let client = redis::Client::open(redis_url)?;
-    let conn_result = select! {
-        conn_result = client.get_async_connection().fuse() => Some(conn_result),
-        _ = shutdown_signal.changed().fuse() => None,
-    };
-    if conn_result.is_none() {
-        return Ok(());
-    }
-    let conn = conn_result.unwrap()?;
-
-    let mut pubsub = conn.into_pubsub();
-    log::info!("connected to {}", redis_url);
 
     let subscribe_fut = async {
         let mut channel_added = dispatch.subscribe_channel_added();
@@ -53,6 +41,12 @@ pub async fn redis_pubsub(
     }
     .fuse();
     let commands_fut = async {
+        log::info!("connecting to {}", redis_url);
+        let client = redis::Client::open(redis_url)?;
+        let conn = client.get_async_connection().await?;
+        let mut pubsub = conn.into_pubsub();
+        log::info!("connected to {}", redis_url);
+
         loop {
             let mut messages = pubsub.on_message();
             let rx_fut = rx.recv().fuse();
@@ -61,7 +55,10 @@ pub async fn redis_pubsub(
             pin_mut!(rx_fut, next_fut);
 
             let cmd_opt: Option<Command> = select! {
-                msg = rx_fut => msg,
+                msg = rx_fut => match msg {
+                    Some(msg) => Some(msg),
+                    None => Some(Command::Quit),
+                },
                 msg = next_fut => {
                     match msg {
                         Some(msg) => {
@@ -90,6 +87,7 @@ pub async fn redis_pubsub(
             let cmd = cmd_opt.unwrap();
             match cmd {
                 Command::Subscribe(channel) => {
+                    log::info!("redis subscribe: {}", channel);
                     pubsub
                         .subscribe(channel)
                         .await
@@ -97,6 +95,7 @@ pub async fn redis_pubsub(
                         .ok();
                 }
                 Command::Unsubscribe(channel) => {
+                    log::info!("redis unsubscribe: {}", channel);
                     pubsub
                         .unsubscribe(channel)
                         .await
@@ -104,10 +103,14 @@ pub async fn redis_pubsub(
                         .ok();
                 }
                 Command::Publish(channel, payload) => {
+                    log::info!("redis message: {} {}", channel, payload);
                     dispatch.publish(&channel, payload);
                 }
+                Command::Quit => break,
             }
         }
+
+        redis::RedisResult::Ok(())
     }
     .fuse();
     let exit_fut = shutdown_signal.changed().fuse();
