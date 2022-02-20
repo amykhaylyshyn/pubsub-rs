@@ -32,12 +32,6 @@ struct NotifyMessage<'a> {
     data: &'a str,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-enum OutgoingMessage<'a> {
-    Notify(NotifyMessage<'a>),
-}
-
 pub struct Server<T> {
     listener: Option<T>,
     jwt_secret: String,

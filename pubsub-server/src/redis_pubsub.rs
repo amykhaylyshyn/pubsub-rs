@@ -9,16 +9,33 @@ enum Command {
 }
 
 pub async fn redis_pubsub(
-    redis_addr: &str,
+    redis_url: &str,
     dispatch: PubSub<String, String>,
     mut shutdown_signal: watch::Receiver<bool>,
 ) -> redis::RedisResult<()> {
+    log::info!("connecting to {}", redis_url);
     let (tx, mut rx) = mpsc::unbounded_channel();
-    let client = redis::Client::open(redis_addr)?;
-    let conn = client.get_async_connection().await?;
+    let client = redis::Client::open(redis_url)?;
+    let conn_result = select! {
+        conn_result = client.get_async_connection().fuse() => Some(conn_result),
+        _ = shutdown_signal.changed().fuse() => None,
+    };
+    if conn_result.is_none() {
+        return Ok(());
+    }
+    let conn = conn_result.unwrap()?;
+
     let mut pubsub = conn.into_pubsub();
+    log::info!("connected to {}", redis_url);
+
     let subscribe_fut = async {
         let mut channel_added = dispatch.subscribe_channel_added();
+        for channel in dispatch.channels().into_iter() {
+            tx.send(Command::Subscribe(channel.to_owned()))
+                .map_err(|_| log::error!("send subscribe command error"))
+                .ok();
+        }
+
         while let Ok(channel) = channel_added.recv().await {
             tx.send(Command::Subscribe(channel))
                 .map_err(|_| log::error!("send subscribe command error"))

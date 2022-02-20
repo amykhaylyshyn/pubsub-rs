@@ -70,6 +70,11 @@ where
         }
     }
 
+    pub fn channels(&self) -> Vec<C> {
+        let channels = self.channels.read();
+        channels.keys().map(|channel| channel.to_owned()).collect()
+    }
+
     pub fn subscribe_channel_added(&self) -> broadcast::Receiver<C> {
         self.channel_added_broadcast.subscribe()
     }
