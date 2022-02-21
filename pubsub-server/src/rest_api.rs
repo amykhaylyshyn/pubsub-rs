@@ -1,7 +1,7 @@
 use actix_web::{web, App, HttpServer};
 use futures::{pin_mut, select, FutureExt};
 use redis::AsyncCommands;
-use serde::Deserialize;
+use serde::{Serialize, Deserialize};
 use std::io;
 use tokio::sync::{mpsc, watch};
 
@@ -9,10 +9,10 @@ struct AppState {
     tx: mpsc::UnboundedSender<PublishRequest>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 struct PublishRequest {
     channel: String,
-    message: String,
+    data: String,
 }
 
 async fn publish(
@@ -51,8 +51,13 @@ pub async fn run_api(
         let mut conn = client.get_async_connection().await?;
 
         while let Some(msg) = rx.recv().await {
-            log::info!("publish to redis: {} {}", msg.channel, msg.message);
-            conn.publish(msg.channel, msg.message).await?;
+            log::info!("publish to redis: {} {}", msg.channel, msg.data);
+            let msg_json = serde_json::to_string(&msg).map_err(|err| log::error!("cannot serialize message: {}", err)).ok();
+            if msg_json.is_none() {
+                continue
+            }
+
+            conn.publish(msg.channel, msg_json.unwrap()).await?;
         }
 
         redis::RedisResult::Ok(())
