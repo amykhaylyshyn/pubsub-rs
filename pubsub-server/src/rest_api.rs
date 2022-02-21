@@ -18,13 +18,13 @@ struct PublishRequest {
 async fn publish(
     app_data: web::Data<AppState>,
     request: web::Json<PublishRequest>,
-) -> web::HttpResponse {
+) -> &'static str {
     app_data
         .tx
         .send(request.into_inner())
         .map_err(|_| log::error!("publish error"))
         .ok();
-    web::HttpResponse::Ok().finish()
+    ""
 }
 
 pub async fn run_api(
@@ -37,7 +37,7 @@ pub async fn run_api(
     let server_fut = async move {
         HttpServer::new(move || {
             App::new()
-                .app_data(AppState { tx: tx.clone() })
+                .app_data(web::Data::new(AppState { tx: tx.clone() }))
                 .service(web::resource("/publish").to(publish))
         })
         .bind(listen_address)?
