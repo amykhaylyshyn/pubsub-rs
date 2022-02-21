@@ -1,4 +1,4 @@
-This is minimalistic PubSub WebSocket server written in Rust using [tokio.rs](https://tokio.rs/) and Redis.
+Minimalistic PubSub WebSocket server written in Rust using [tokio.rs](https://tokio.rs/) and Redis.
 
 ### Run
 ```shell
