@@ -198,6 +198,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "actix-web-httpauth"
+version = "0.6.0-beta.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d818f2220aab365d18a1b67c53121e6a656f0b742eee5de7bd20e75338377a5f"
+dependencies = [
+ "actix-service",
+ "actix-utils",
+ "actix-web",
+ "base64",
+ "futures-core",
+ "futures-util",
+ "pin-project-lite",
+]
+
+[[package]]
 name = "adler"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1119,6 +1134,7 @@ name = "pubsub-server"
 version = "0.1.0"
 dependencies = [
  "actix-web",
+ "actix-web-httpauth",
  "clap",
  "dotenv",
  "env_logger",

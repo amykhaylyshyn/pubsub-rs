@@ -32,6 +32,9 @@ struct Args {
     /// REST API listen address
     #[clap(long)]
     rest_api_address: Option<String>,
+    /// REST API API Key
+    #[clap(long)]
+    rest_api_key: String,
 }
 
 #[cfg(target_family = "windows")]
@@ -90,10 +93,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.rest_api_port
     );
     let rest_api_fut = async move {
-        rest_api::run_api(rest_api_host.as_str(), redis_url.as_str(), shutdown_rx)
-            .await
-            .map_err(|err| log::error!("rest api error: {}", err))
-            .ok();
+        rest_api::run_api(
+            rest_api_host.as_str(),
+            redis_url.as_str(),
+            args.rest_api_key.as_str(),
+            shutdown_rx,
+        )
+        .await
+        .map_err(|err| log::error!("rest api error: {}", err))
+        .ok();
     }
     .fuse();
 

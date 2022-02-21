@@ -1,7 +1,11 @@
-use actix_web::{web, App, HttpServer};
+use actix_web::dev::ServiceRequest;
+use actix_web::{web, App, HttpServer, ResponseError};
+use actix_web_httpauth::extractors::bearer::BearerAuth;
+use actix_web_httpauth::middleware::HttpAuthentication;
 use futures::{pin_mut, select, FutureExt};
 use redis::AsyncCommands;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use std::fmt::{Debug, Display, Formatter};
 use std::io;
 use tokio::sync::{mpsc, watch};
 
@@ -27,17 +31,40 @@ async fn publish(
     ""
 }
 
+fn check_api_key(
+    api_key: String,
+    req: ServiceRequest,
+    credential: BearerAuth,
+) -> Result<ServiceRequest, actix_web::Error> {
+    if credential.token() != api_key {
+        Err(actix_web::Error::from(io::Error::from(
+            io::ErrorKind::PermissionDenied,
+        )))
+    } else {
+        Ok(req)
+    }
+}
+
 pub async fn run_api(
     listen_address: &str,
     redis_url: &str,
+    api_key: &str,
     mut shutdown_signal: watch::Receiver<bool>,
 ) -> io::Result<()> {
     let (tx, mut rx) = mpsc::unbounded_channel();
+    let api_key = api_key.to_owned();
 
     let server_fut = async move {
+        let api_key = api_key.clone();
         HttpServer::new(move || {
+            let api_key = api_key.clone();
+            let auth = HttpAuthentication::bearer(move |req, credentials| {
+                let api_key = api_key.clone();
+                async move { check_api_key(api_key, req, credentials) }
+            });
             App::new()
                 .app_data(web::Data::new(AppState { tx: tx.clone() }))
+                .wrap(auth)
                 .service(web::resource("/publish").to(publish))
         })
         .bind(listen_address)?
@@ -52,9 +79,11 @@ pub async fn run_api(
 
         while let Some(msg) = rx.recv().await {
             log::info!("publish to redis: {} {}", msg.channel, msg.data);
-            let msg_json = serde_json::to_string(&msg).map_err(|err| log::error!("cannot serialize message: {}", err)).ok();
+            let msg_json = serde_json::to_string(&msg)
+                .map_err(|err| log::error!("cannot serialize message: {}", err))
+                .ok();
             if msg_json.is_none() {
-                continue
+                continue;
             }
 
             conn.publish(msg.channel, msg_json.unwrap()).await?;
