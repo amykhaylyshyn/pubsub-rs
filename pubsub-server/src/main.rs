@@ -11,21 +11,27 @@ use pubsub::PubSub;
 use std::io;
 use tokio::{signal, sync::watch};
 
-#[derive(Parser)]
+#[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
+    /// WebSocket server listen address. 0.0.0.0 for all network interfaces
     #[clap(long)]
     address: Option<String>,
     #[clap(parse(try_from_str), short, long)]
+    /// WebSocket server listen port
     port: u16,
+    /// JWT secret used to encode/decode client tokens
     #[clap(long)]
     jwt_secret: String,
+    /// Redis address
     #[clap(long)]
     redis_address: String,
+    /// REST API listen port
     #[clap(parse(try_from_str), long)]
     rest_api_port: u16,
+    /// REST API listen address
     #[clap(long)]
-    rest_api_host: Option<String>,
+    rest_api_address: Option<String>,
 }
 
 #[cfg(target_family = "windows")]
@@ -80,7 +86,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .fuse();
     let rest_api_host = format!(
         "{}:{}",
-        args.rest_api_host.unwrap_or("127.0.0.1".to_owned()),
+        args.rest_api_address.unwrap_or("127.0.0.1".to_owned()),
         args.rest_api_port
     );
     let rest_api_fut = async move {
