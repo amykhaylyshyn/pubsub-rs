@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::io;
 use std::net::Ipv4Addr;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, ToSocketAddrs};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_stream::wrappers::TcpListenerStream;
 use tokio_tungstenite::tungstenite::{
@@ -60,18 +60,33 @@ impl<T> Server<T> {
 }
 
 impl Server<TcpListenerStream> {
+    pub async fn bind<A: ToSocketAddrs>(
+        address: A,
+        jwt_secret: &str,
+        dispatch: PubSub<String, String>,
+        shutdown_signal: watch::Receiver<bool>,
+    ) -> io::Result<Self> {
+        Ok(Self::new(
+            TcpListenerStream::new(TcpListener::bind(address).await?),
+            jwt_secret,
+            dispatch,
+            shutdown_signal,
+        ))
+    }
+
     pub async fn bind_to_port(
         port: u16,
         jwt_secret: &str,
         dispatch: PubSub<String, String>,
         shutdown_signal: watch::Receiver<bool>,
     ) -> io::Result<Self> {
-        Ok(Self::new(
-            TcpListenerStream::new(TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await?),
+        Ok(Self::bind(
+            (Ipv4Addr::LOCALHOST, port),
             jwt_secret,
             dispatch,
             shutdown_signal,
-        ))
+        )
+        .await?)
     }
 }
 

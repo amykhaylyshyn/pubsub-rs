@@ -14,6 +14,8 @@ use tokio::{signal, sync::watch};
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
+    #[clap(long)]
+    address: Option<String>,
     #[clap(parse(try_from_str), short, long)]
     port: u16,
     #[clap(long)]
@@ -44,8 +46,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Args = Args::parse();
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let dispatch = PubSub::new(100);
-    let server = Server::bind_to_port(
-        args.port,
+    let server_address = format!(
+        "{}:{}",
+        args.address.unwrap_or("127.0.0.1".to_string()),
+        args.port
+    );
+    let server = Server::bind(
+        server_address.as_str(),
         args.jwt_secret.as_str(),
         dispatch.clone(),
         shutdown_rx.clone(),
