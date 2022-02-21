@@ -168,6 +168,7 @@ where
                             match msg_result {
                                 Ok(msg) => {
                                     // TODO: fork tungstenite to support bytes::Bytes and publish data without copying
+                                    // See this issue for details: https://github.com/snapview/tungstenite-rs/pull/104
                                     tx.send(Message::Text(msg))
                                         .await
                                         .map_err(|_| log::error!("send error"))
@@ -220,9 +221,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::StreamExt;
     use jsonwebtoken::{EncodingKey, Header};
     use std::time::{SystemTime, UNIX_EPOCH};
-    use futures::StreamExt;
     use tokio_tungstenite::connect_async;
 
     #[tokio::test]
@@ -266,9 +267,16 @@ mod tests {
         dispatch.publish(&"channel1".to_string(), "message1".to_string());
         dispatch.publish(&"channel2".to_string(), "message2".to_string());
 
-        let messages: Vec<String> = stream.take(2).map(|msg| msg.unwrap().to_string()).collect().await;
+        let messages: Vec<String> = stream
+            .take(2)
+            .map(|msg| msg.unwrap().to_string())
+            .collect()
+            .await;
 
-        assert_eq!(messages, vec! ["message1".to_string(), "message2".to_string()]);
+        assert_eq!(
+            messages,
+            vec!["message1".to_string(), "message2".to_string()]
+        );
 
         shutdown_tx.send(true)?;
         server_task.await?;
