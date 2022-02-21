@@ -1,11 +1,10 @@
 use actix_web::dev::ServiceRequest;
-use actix_web::{web, App, HttpServer, ResponseError};
+use actix_web::{web, App, HttpServer};
 use actix_web_httpauth::extractors::bearer::BearerAuth;
 use actix_web_httpauth::middleware::HttpAuthentication;
 use futures::{pin_mut, select, FutureExt};
 use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
-use std::fmt::{Debug, Display, Formatter};
 use std::io;
 use tokio::sync::{mpsc, watch};
 

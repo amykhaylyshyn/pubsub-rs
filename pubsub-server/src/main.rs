@@ -6,7 +6,7 @@ mod server;
 use crate::server::Server;
 use clap::Parser;
 use dotenv::dotenv;
-use futures::{join, FutureExt};
+use futures::{join, stream, FutureExt, StreamExt};
 use pubsub::PubSub;
 use std::io;
 use tokio::{signal, sync::watch};
@@ -44,7 +44,15 @@ async fn wait_exit_signal() -> io::Result<()> {
 
 #[cfg(target_family = "unix")]
 async fn wait_exit_signal() -> io::Result<()> {
-    unimplemented!();
+    use tokio::signal::unix::SignalKind;
+    use tokio_stream::wrappers::SignalStream;
+
+    let signals = vec![
+        SignalStream::new(signal::unix::signal(SignalKind::terminate())?),
+        SignalStream::new(signal::unix::signal(SignalKind::interrupt())?),
+    ];
+    stream::select_all(signals.into_iter()).take(1).next().await;
+    Ok(())
 }
 
 #[actix_web::main]
