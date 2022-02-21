@@ -152,6 +152,7 @@ where
                         async move {
                             match msg_result {
                                 Ok(msg) => {
+                                    // TODO: fork tungstenite to support bytes::Bytes and publish data without copying
                                     tx.send(Message::Text(msg))
                                         .await
                                         .map_err(|_| log::error!("send error"))
